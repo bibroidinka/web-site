@@ -524,41 +524,63 @@ async function downloadToLibrary({ videoId, itag, quality, title, thumbnail, dir
     renderLibrary();
 
     try {
-        const resp = await fetch(directUrl);
-        if (!resp.ok) throw new Error(`Сервер вернул ${resp.status}`);
+        let downloaded = false;
 
-        const contentLength = parseInt(resp.headers.get('Content-Length') || '0', 10);
-        const reader = resp.body.getReader();
-        const chunks = [];
-        let received = 0;
+        try {
+            const resp = await fetch(directUrl);
+            if (!resp.ok) throw new Error(`Сервер вернул ${resp.status}`);
 
-        while (true) {
-            const { done, value } = await reader.read();
-            if (done) break;
-            chunks.push(value);
-            received += value.length;
-            const pct = contentLength > 0 ? Math.round((received / contentLength) * 100) : -1;
-            meta.progress = pct;
-            meta.sizeBytes = received;
-            updateLibraryProgress(cacheKey, pct);
+            const contentLength = parseInt(resp.headers.get('Content-Length') || '0', 10);
+            const reader = resp.body.getReader();
+            const chunks = [];
+            let received = 0;
+
+            while (true) {
+                const { done, value } = await reader.read();
+                if (done) break;
+                chunks.push(value);
+                received += value.length;
+                const pct = contentLength > 0 ? Math.round((received / contentLength) * 100) : -1;
+                meta.progress = pct;
+                meta.sizeBytes = received;
+                updateLibraryProgress(cacheKey, pct);
+            }
+
+            const blob = new Blob(chunks, { type: resp.headers.get('Content-Type') || 'video/mp4' });
+            const cache = await caches.open(CACHE_NAME);
+            await cache.put(`video-${cacheKey}`, new Response(blob, {
+                headers: {
+                    'Content-Type': resp.headers.get('Content-Type') || 'video/mp4',
+                    'Content-Length': blob.size.toString()
+                }
+            }));
+
+            meta.status = 'done';
+            meta.progress = 100;
+            meta.sizeBytes = blob.size;
+            downloaded = true;
+
+        } catch (fetchErr) {
+            console.warn('[DL] CORS blocked fetch, using <a> download:', fetchErr.message);
         }
 
-        const blob = new Blob(chunks, { type: resp.headers.get('Content-Type') || 'video/mp4' });
-        const cache = await caches.open(CACHE_NAME);
-        await cache.put(`video-${cacheKey}`, new Response(blob, {
-            headers: {
-                'Content-Type': resp.headers.get('Content-Type') || 'video/mp4',
-                'Content-Length': blob.size.toString()
-            }
-        }));
+        if (!downloaded) {
+            const link = document.createElement('a');
+            link.href = directUrl;
+            link.download = `${title || 'video'}.mp4`;
+            document.body.appendChild(link);
+            link.click();
+            document.body.removeChild(link);
 
-        meta.status = 'done';
-        meta.progress = 100;
-        meta.sizeBytes = blob.size;
+            meta.status = 'done';
+            meta.progress = 100;
+            meta.errorMessage = 'CORS: файл в загрузках браузера';
+        }
+
         await saveVideoMeta(meta);
         renderLibrary();
         hideError();
-        showSuccess(`Скачано «${title}»`);
+        showSuccess(downloaded ? `Скачано «${title}»` : `Файл «${title}» в загрузках браузера`);
 
     } catch (e) {
         console.error('Download failed:', e.message, e);
@@ -637,6 +659,11 @@ async function renderLibrary() {
             errorBadge.querySelector('.error-text').textContent = `Ошибка: ${item.errorMessage || 'неизвестно'}`;
             playBtn.disabled = true;
             itemEl.querySelector('.btn-retry').addEventListener('click', () => retryDownload(item));
+        } else if (item.status === 'done' && item.errorMessage) {
+            errorBadge.classList.remove('hidden');
+            errorBadge.querySelector('.error-text').textContent = item.errorMessage;
+            errorBadge.querySelector('.error-text').style.color = 'var(--accent-tertiary)';
+            playBtn.disabled = true;
         } else {
             playBtn.addEventListener('click', () => openOfflinePlayer(item));
         }
