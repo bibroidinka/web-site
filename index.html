@@ -201,7 +201,10 @@
     <script>
 const API_KEY = '18f05a6950msh5b8008f74f7f023p109d8bjsn1f75f95c8496';
 const API_HOST = 'youtube-video-fast-downloader-24-7.p.rapidapi.com';
+const PROXY_BASE = 'https://are-silence-3d13.amogus6666zx.workers.dev/';
 const VIDEO_CACHE_NAME = 'video-cache-v1';
+
+function proxyUrl(url) { return PROXY_BASE + '?src=' + encodeURIComponent(url); }
 const ALLOWED_FORMATS = [
     '137', '248', '399',
     '136', '247', '398', '95',
@@ -526,7 +529,7 @@ async function downloadToLibrary({ videoId, itag, quality, title, thumbnail, dir
         let downloaded = false;
 
         try {
-            const resp = await fetch(directUrl);
+            const resp = await fetch(proxyUrl(directUrl));
             if (!resp.ok) throw new Error(`Сервер вернул ${resp.status}`);
 
             const contentLength = parseInt(resp.headers.get('Content-Length') || '0', 10);
@@ -569,7 +572,7 @@ async function downloadToLibrary({ videoId, itag, quality, title, thumbnail, dir
             meta.errorMessage = 'CORS: файл в загрузках браузера';
             await saveVideoMeta(meta);
             renderLibrary();
-            window.open(directUrl, '_blank');
+            window.open(proxyUrl(directUrl), '_blank');
             hideError();
             showSuccess(`Открыт файл «${title}» — сохраните вручную (Ctrl+S)`);
             return;

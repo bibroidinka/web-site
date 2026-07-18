@@ -1,6 +1,8 @@
 const BASE = new URL('./', self.registration.scope).pathname;
 const CACHE_NAME = 'yt-offline-player-v1';
 const VIDEO_CACHE_NAME = 'video-cache-v1';
+const PROXY_CACHE_NAME = 'proxy-cache-v1';
+const PROXY_HOST = 'are-silence-3d13.amogus6666zx.workers.dev';
 const STATIC_ASSETS = [
     BASE,
     BASE + 'index.html',
@@ -36,7 +38,7 @@ self.addEventListener('activate', (event) => {
             .then((cacheNames) => {
                 return Promise.all(
                     cacheNames
-                        .filter((name) => name !== CACHE_NAME && name !== VIDEO_CACHE_NAME)
+                        .filter((name) => name !== CACHE_NAME && name !== VIDEO_CACHE_NAME && name !== PROXY_CACHE_NAME)
                         .map((name) => caches.delete(name))
                 );
             })
@@ -144,6 +146,22 @@ function parseRange(rangeHeader, totalSize) {
     return [{ start, end }];
 }
 
+async function handleProxyRequest(request) {
+    const cache = await caches.open(PROXY_CACHE_NAME);
+    const cachedResponse = await cache.match(request);
+    if (cachedResponse) return cachedResponse;
+
+    try {
+        const networkResponse = await fetch(request);
+        if (networkResponse.ok) {
+            cache.put(request, networkResponse.clone());
+        }
+        return networkResponse;
+    } catch (e) {
+        return new Response('Proxy fetch failed', { status: 502 });
+    }
+}
+
 async function handleStaticRequest(request) {
     const cache = await caches.open(CACHE_NAME);
     const cachedResponse = await cache.match(request);
@@ -178,12 +196,17 @@ self.addEventListener('fetch', (event) => {
     
     if (!url.protocol.startsWith('http')) return;
     
-    if (url.origin !== self.location.origin) return;
-    
     if (isOfflineVideoRequest(request)) {
         event.respondWith(handleOfflineVideoRequest(request));
         return;
     }
+    
+    if (url.hostname === PROXY_HOST) {
+        event.respondWith(handleProxyRequest(request));
+        return;
+    }
+    
+    if (url.origin !== self.location.origin) return;
     
     event.respondWith(handleStaticRequest(request));
 });
