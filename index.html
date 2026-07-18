@@ -202,7 +202,6 @@
 const API_KEY = '18f05a6950msh5b8008f74f7f023p109d8bjsn1f75f95c8496';
 const API_HOST = 'youtube-video-fast-downloader-24-7.p.rapidapi.com';
 const PROXY_BASE = 'https://are-silence-3d13.amogus6666zx.workers.dev/';
-const VIDEO_CACHE_NAME = 'video-cache-v1';
 
 function proxyUrl(url) { return PROXY_BASE + '?src=' + encodeURIComponent(url); }
 const ALLOWED_FORMATS = [
@@ -224,8 +223,9 @@ const FORMAT_LABELS = {
 };
 
 const DB_NAME = 'yt-offline-db';
-const DB_VERSION = 1;
+const DB_VERSION = 2;
 const STORE_NAME = 'videos';
+const BLOB_STORE = 'videoBlobs';
 
 function openDB() {
     return new Promise((resolve, reject) => {
@@ -236,8 +236,70 @@ function openDB() {
                 const store = db.createObjectStore(STORE_NAME, { keyPath: 'cacheKey' });
                 store.createIndex('addedAt', 'addedAt', { unique: false });
             }
+            if (!db.objectStoreNames.contains(BLOB_STORE)) {
+                db.createObjectStore(BLOB_STORE, { keyPath: 'cacheKey' });
+            }
         };
         req.onsuccess = (e) => resolve(e.target.result);
+        req.onerror = (e) => reject(e.target.error);
+    });
+}
+
+async function saveVideoBlob(cacheKey, blob) {
+    const db = await openDB();
+    return new Promise((resolve, reject) => {
+        const tx = db.transaction(BLOB_STORE, 'readwrite');
+        tx.objectStore(BLOB_STORE).put({ cacheKey, blob });
+        tx.oncomplete = () => resolve();
+        tx.onerror = (e) => reject(e.target.error);
+    });
+}
+
+async function getVideoBlob(cacheKey) {
+    const db = await openDB();
+    return new Promise((resolve, reject) => {
+        const tx = db.transaction(BLOB_STORE, 'readonly');
+        const req = tx.objectStore(BLOB_STORE).get(cacheKey);
+        req.onsuccess = (e) => resolve(e.target.result ? e.target.result.blob : null);
+        req.onerror = (e) => reject(e.target.error);
+    });
+}
+
+async function deleteVideoBlob(cacheKey) {
+    const db = await openDB();
+    return new Promise((resolve, reject) => {
+        const tx = db.transaction(BLOB_STORE, 'readwrite');
+        tx.objectStore(BLOB_STORE).delete(cacheKey);
+        tx.oncomplete = () => resolve();
+        tx.onerror = (e) => reject(e.target.error);
+    });
+}
+
+async function clearAllBlobs() {
+    const db = await openDB();
+    return new Promise((resolve, reject) => {
+        const tx = db.transaction(BLOB_STORE, 'readwrite');
+        tx.objectStore(BLOB_STORE).clear();
+        tx.oncomplete = () => resolve();
+        tx.onerror = (e) => reject(e.target.error);
+    });
+}
+
+async function getBlobsSize() {
+    const db = await openDB();
+    return new Promise((resolve, reject) => {
+        const tx = db.transaction(BLOB_STORE, 'readonly');
+        const req = tx.objectStore(BLOB_STORE).openCursor();
+        let total = 0;
+        req.onsuccess = (e) => {
+            const cursor = e.target.result;
+            if (cursor) {
+                total += cursor.value.blob.size;
+                cursor.continue();
+            } else {
+                resolve(total);
+            }
+        };
         req.onerror = (e) => reject(e.target.error);
     });
 }
@@ -283,7 +345,7 @@ async function deleteVideoMeta(cacheKey) {
 
 let state = {
     videoId: null, videoTitle: '', videoThumbnail: '', formats: [], selectedFormat: null,
-    downloadUrl: null, offlinePlayerOpen: false
+    downloadUrl: null, offlinePlayerOpen: false, currentBlobUrl: null
 };
 
 const elements = {
@@ -564,13 +626,7 @@ async function downloadToLibrary({ videoId, itag, quality, title, thumbnail, dir
                 }
 
                 const blob = new Blob(chunks, { type: resp.headers.get('Content-Type') || 'video/mp4' });
-                const cache = await caches.open(VIDEO_CACHE_NAME);
-                await cache.put(`video-${cacheKey}`, new Response(blob, {
-                    headers: {
-                        'Content-Type': resp.headers.get('Content-Type') || 'video/mp4',
-                        'Content-Length': blob.size.toString()
-                    }
-                }));
+                await saveVideoBlob(cacheKey, blob);
 
                 meta.status = 'done';
                 meta.progress = 100;
@@ -691,12 +747,18 @@ async function renderLibrary() {
 }
 
 async function openOfflinePlayer(item) {
-    const fakeUrl = `/offline-video/${item.cacheKey}`;
+    const blob = await getVideoBlob(item.cacheKey);
+    if (!blob) {
+        showError('Видео не найдено в хранилище');
+        return;
+    }
+    const blobUrl = URL.createObjectURL(blob);
     const player = elements.offlinePlayerOverlay.querySelector('video');
-    player.src = fakeUrl;
+    player.src = blobUrl;
     player.load();
     elements.offlinePlayerOverlay.classList.add('visible');
     state.offlinePlayerOpen = true;
+    state.currentBlobUrl = blobUrl;
     document.body.style.overflow = 'hidden';
     try { await player.play(); } catch {} 
 }
@@ -704,6 +766,7 @@ async function openOfflinePlayer(item) {
 function closeOfflinePlayer() {
     const player = elements.offlinePlayerOverlay.querySelector('video');
     player.pause();
+    if (state.currentBlobUrl) { URL.revokeObjectURL(state.currentBlobUrl); state.currentBlobUrl = null; }
     player.src = '';
     player.load();
     elements.offlinePlayerOverlay.classList.remove('visible');
@@ -712,8 +775,7 @@ function closeOfflinePlayer() {
 }
 
 async function removeFromLibrary(cacheKey) {
-    const cache = await caches.open(VIDEO_CACHE_NAME);
-    await cache.delete('video-' + cacheKey);
+    await deleteVideoBlob(cacheKey);
     await deleteVideoMeta(cacheKey);
     await renderLibrary();
     await updateCacheSize();
@@ -729,9 +791,7 @@ async function retryDownload(item) {
 
 async function clearAllCache() {
     if (!confirm('Удалить все видео и очистить кэш?')) return;
-    const cache = await caches.open(VIDEO_CACHE_NAME);
-    const keys = await cache.keys();
-    for (const req of keys) { await cache.delete(req); }
+    await clearAllBlobs();
     const db = await openDB();
     const tx = db.transaction(STORE_NAME, 'readwrite');
     tx.objectStore(STORE_NAME).clear();
@@ -742,10 +802,7 @@ async function clearAllCache() {
 
 async function updateCacheSize() {
     try {
-        const cache = await caches.open(VIDEO_CACHE_NAME);
-        const keys = await cache.keys();
-        let size = 0;
-        for (const k of keys) { const r = await cache.match(k); if (r) size += (await r.blob()).size; }
+        const size = await getBlobsSize();
         elements.cacheSize.textContent = `Размер кэша: ${formatBytes(size)}`;
     } catch { elements.cacheSize.textContent = 'Размер кэша: неизвестно'; }
 }
