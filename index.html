@@ -561,26 +561,25 @@ async function downloadToLibrary({ videoId, itag, quality, title, thumbnail, dir
             downloaded = true;
 
         } catch (fetchErr) {
-            console.warn('[DL] CORS blocked fetch, using <a> download:', fetchErr.message);
+            console.warn('[DL] fetch/CORS failed:', fetchErr.message);
         }
 
         if (!downloaded) {
-            const link = document.createElement('a');
-            link.href = directUrl;
-            link.download = `${title || 'video'}.mp4`;
-            document.body.appendChild(link);
-            link.click();
-            document.body.removeChild(link);
-
             meta.status = 'done';
             meta.progress = 100;
             meta.errorMessage = 'CORS: файл в загрузках браузера';
+            await saveVideoMeta(meta);
+            renderLibrary();
+            window.open(directUrl, '_blank');
+            hideError();
+            showSuccess(`Открыт файл «${title}» — сохраните вручную (Ctrl+S)`);
+            return;
         }
 
         await saveVideoMeta(meta);
         renderLibrary();
         hideError();
-        showSuccess(downloaded ? `Скачано «${title}»` : `Файл «${title}» в загрузках браузера`);
+        showSuccess(`Скачано «${title}»`);
 
     } catch (e) {
         console.error('Download failed:', e.message, e);
