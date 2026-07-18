@@ -61,7 +61,7 @@
                 </div>
 
                 <div class="formats-section hidden" id="formatsSection">
-                    <h3 class="section-title">Доступные качества (MP4 / avc1)</h3>
+                    <h3 class="section-title">Доступные качества</h3>
                     <div class="quality-grid" id="qualityGrid" role="group" aria-label="Выбор качества видео"></div>
                     <p id="formatError" class="error-text hidden"></p>
                 </div>
@@ -201,7 +201,7 @@
     <script>
 const API_KEY = '18f05a6950msh5b8008f74f7f023p109d8bjsn1f75f95c8496';
 const API_HOST = 'youtube-video-fast-downloader-24-7.p.rapidapi.com';
-const CACHE_NAME = 'video-cache-v1';
+const VIDEO_CACHE_NAME = 'video-cache-v1';
 const ALLOWED_FORMATS = [
     '137', '248', '399',
     '136', '247', '398', '95',
@@ -279,9 +279,8 @@ async function deleteVideoMeta(cacheKey) {
 }
 
 let state = {
-    videoId: null, videoTitle: '', formats: [], selectedFormat: null,
-    downloadUrl: null, timerInterval: null, timerSeconds: 25,
-    isTimerRunning: false, offlinePlayerOpen: false
+    videoId: null, videoTitle: '', videoThumbnail: '', formats: [], selectedFormat: null,
+    downloadUrl: null, offlinePlayerOpen: false
 };
 
 const elements = {
@@ -289,9 +288,7 @@ const elements = {
     videoIdHint: document.getElementById('videoIdHint'), videoIdDisplay: document.getElementById('videoIdDisplay'),
     errorMsg: document.getElementById('errorMsg'), formatsSection: document.getElementById('formatsSection'),
     qualityGrid: document.getElementById('qualityGrid'), formatError: document.getElementById('formatError'),
-    timerSection: document.getElementById('timerSection'), timerDisplay: document.getElementById('timerDisplay'),
-    progressBar: document.getElementById('progressBar'), saveBtn: document.getElementById('saveBtn'),
-    cancelBtn: document.getElementById('cancelBtn'), videoInfo: document.getElementById('videoInfo'),
+    videoInfo: document.getElementById('videoInfo'),
     videoTitle: document.getElementById('videoTitle'), selectedQuality: document.getElementById('selectedQuality'),
     onlinePlayer: document.getElementById('onlinePlayer'), playerPlaceholder: document.getElementById('playerPlaceholder'),
     watchOnlineBtn: document.getElementById('watchOnlineBtn'), libraryList: document.getElementById('libraryList'),
@@ -380,7 +377,8 @@ async function fetchFormats() {
         const data = await resp.json();
         
         if (data && data.title) { 
-            state.videoTitle = data.title; 
+            state.videoTitle = data.title;
+            state.videoThumbnail = (data.thumbnail && data.thumbnail[2]) ? data.thumbnail[2].url : (data.thumbnail && data.thumbnail[0]) ? data.thumbnail[0].url : '';
             state.formats = filterFormats(data.availableQuality || []); 
             renderFormats(); 
             elements.formatsSection.classList.remove('hidden'); 
@@ -415,6 +413,7 @@ function filterFormats(formats) {
             return {
                 itag: idStr,
                 quality: displayQuality,
+                type: f.type || '',
                 mimeType: f.mime || f.mime_type || '',
                 size: sizeInBytes ? (sizeInBytes / 1048576).toFixed(1) : '?',
                 codec: f.mime || ''
@@ -441,7 +440,7 @@ function renderFormats() {
     elements.qualityGrid.innerHTML = '';
     elements.formatError.classList.add('hidden');
     if (!state.formats.length) {
-        elements.formatError.textContent = 'Подходящие форматы (MP4/avc1) не найдены';
+        elements.formatError.textContent = 'Подходящие форматы не найдены';
         elements.formatError.classList.remove('hidden');
         return;
     }
@@ -488,7 +487,7 @@ async function initiateDownload(format) {
             itag: format.itag,
             quality: format.quality,
             title: state.videoTitle,
-            thumbnail: '',
+            thumbnail: state.videoThumbnail || '',
             directUrl: data.file
         });
     } catch (e) {
@@ -501,7 +500,7 @@ async function downloadToLibrary({ videoId, itag, quality, title, thumbnail, dir
     const cacheKey = `${videoId}-${itag}`;
 
     const quota = await checkStorageQuota();
-    if (quota.usage && quota.quota) {
+    if (quota.usage !== undefined && quota.quota !== undefined) {
         const meta = await getAllVideos();
         const existing = meta.find(v => v.cacheKey === cacheKey);
         const estimatedSize = existing ? existing.sizeBytes : 500 * 1048576;
@@ -547,7 +546,7 @@ async function downloadToLibrary({ videoId, itag, quality, title, thumbnail, dir
             }
 
             const blob = new Blob(chunks, { type: resp.headers.get('Content-Type') || 'video/mp4' });
-            const cache = await caches.open(CACHE_NAME);
+            const cache = await caches.open(VIDEO_CACHE_NAME);
             await cache.put(`video-${cacheKey}`, new Response(blob, {
                 headers: {
                     'Content-Type': resp.headers.get('Content-Type') || 'video/mp4',
@@ -694,8 +693,8 @@ function closeOfflinePlayer() {
 }
 
 async function removeFromLibrary(cacheKey) {
-    const cache = await caches.open(CACHE_NAME);
-    await cache.delete('/offline-video/' + cacheKey);
+    const cache = await caches.open(VIDEO_CACHE_NAME);
+    await cache.delete('video-' + cacheKey);
     await deleteVideoMeta(cacheKey);
     await renderLibrary();
     await updateCacheSize();
@@ -711,7 +710,7 @@ async function retryDownload(item) {
 
 async function clearAllCache() {
     if (!confirm('Удалить все видео и очистить кэш?')) return;
-    const cache = await caches.open(CACHE_NAME);
+    const cache = await caches.open(VIDEO_CACHE_NAME);
     const keys = await cache.keys();
     for (const req of keys) { await cache.delete(req); }
     const db = await openDB();
@@ -724,7 +723,7 @@ async function clearAllCache() {
 
 async function updateCacheSize() {
     try {
-        const cache = await caches.open(CACHE_NAME);
+        const cache = await caches.open(VIDEO_CACHE_NAME);
         const keys = await cache.keys();
         let size = 0;
         for (const k of keys) { const r = await cache.match(k); if (r) size += (await r.blob()).size; }
@@ -763,11 +762,7 @@ function showUpdateAvailable() {
 
 const style = document.createElement('style'); style.textContent = '@keyframes slideUp{from{opacity:0;transform:translateX(-50%) translateY(20px)}to{opacity:1;transform:translateX(-50%) translateY(0)}}'; document.head.appendChild(style);
 
-if ('serviceWorker' in navigator) {
-    navigator.serviceWorker.register('sw.js')
-        .then(reg => console.log('SW registered:', reg.scope))
-        .catch(err => console.error('SW registration failed:', err));
-}
+
 </script>
 </body>
 </html>
