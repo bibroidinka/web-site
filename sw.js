@@ -1,11 +1,12 @@
+const BASE = new URL('./', self.registration.scope).pathname;
 const CACHE_NAME = 'yt-offline-player-v1';
 const VIDEO_CACHE_NAME = 'video-cache-v1';
 const STATIC_ASSETS = [
-    '/',
-    '/index.html',
-    '/style.css',
-    '/manifest.json',
-    '/sw.js'
+    BASE,
+    BASE + 'index.html',
+    BASE + 'style.css',
+    BASE + 'manifest.json',
+    BASE + 'sw.js'
 ];
 
 const OFFLINE_VIDEO_PREFIX = '/offline-video/';
