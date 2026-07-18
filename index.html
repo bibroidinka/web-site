@@ -591,6 +591,20 @@ async function downloadToLibrary({ videoId, itag, quality, title, thumbnail, dir
         let downloaded = false;
         const MAX_RETRIES = 10;
         const WAIT_SECONDS = 15;
+        let wakeLock = null;
+
+        async function requestWakeLock() {
+            try {
+                wakeLock = await navigator.wakeLock.request('screen');
+                wakeLock.addEventListener('release', () => { wakeLock = null; });
+            } catch (e) { console.warn('Wake Lock failed:', e); }
+        }
+
+        async function releaseWakeLock() {
+            if (wakeLock) { await wakeLock.release(); wakeLock = null; }
+        }
+
+        await requestWakeLock();
 
         for (let attempt = 1; attempt <= MAX_RETRIES; attempt++) {
             try {
@@ -642,16 +656,27 @@ async function downloadToLibrary({ videoId, itag, quality, title, thumbnail, dir
         }
 
         if (!downloaded) {
-            meta.status = 'error';
-            meta.progress = 0;
-            meta.errorMessage = 'Не удалось скачать файл';
+            await releaseWakeLock();
+            console.warn('[DL] fetch/IndexedDB failed, falling back to native download');
+            meta.status = 'done';
+            meta.progress = 100;
+            meta.errorMessage = 'Скачано через браузер';
             await saveVideoMeta(meta);
             renderLibrary();
-            showError('Не удалось скачать файл. Попробуйте другой формат.');
+
+            const link = document.createElement('a');
+            link.href = proxyUrl(directUrl);
+            link.download = `${title || 'video'}.mp4`;
+            link.style.display = 'none';
+            document.body.appendChild(link);
+            link.click();
+            document.body.removeChild(link);
+
+            hideError();
+            showSuccess(`Скачивание начато в браузере — проверьте «Загрузки»`);
+            return;
         }
 
-        await saveVideoMeta(meta);
-        renderLibrary();
         hideError();
         showSuccess(`Скачано «${title}»`);
 
