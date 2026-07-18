@@ -567,15 +567,12 @@ async function downloadToLibrary({ videoId, itag, quality, title, thumbnail, dir
         }
 
         if (!downloaded) {
-            meta.status = 'done';
-            meta.progress = 100;
-            meta.errorMessage = 'CORS: файл в загрузках браузера';
+            meta.status = 'error';
+            meta.progress = 0;
+            meta.errorMessage = 'Не удалось скачать файл';
             await saveVideoMeta(meta);
             renderLibrary();
-            window.open(proxyUrl(directUrl), '_blank');
-            hideError();
-            showSuccess(`Открыт файл «${title}» — сохраните вручную (Ctrl+S)`);
-            return;
+            showError('Не удалось скачать файл. Попробуйте другой формат.');
         }
 
         await saveVideoMeta(meta);
