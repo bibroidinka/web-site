@@ -527,43 +527,62 @@ async function downloadToLibrary({ videoId, itag, quality, title, thumbnail, dir
 
     try {
         let downloaded = false;
+        const MAX_RETRIES = 10;
+        const WAIT_SECONDS = 15;
 
-        try {
-            const resp = await fetch(proxyUrl(directUrl));
-            if (!resp.ok) throw new Error(`Сервер вернул ${resp.status}`);
+        for (let attempt = 1; attempt <= MAX_RETRIES; attempt++) {
+            try {
+                const resp = await fetch(proxyUrl(directUrl));
 
-            const contentLength = parseInt(resp.headers.get('Content-Length') || '0', 10);
-            const reader = resp.body.getReader();
-            const chunks = [];
-            let received = 0;
-
-            while (true) {
-                const { done, value } = await reader.read();
-                if (done) break;
-                chunks.push(value);
-                received += value.length;
-                const pct = contentLength > 0 ? Math.round((received / contentLength) * 100) : -1;
-                meta.progress = pct;
-                meta.sizeBytes = received;
-                updateLibraryProgress(cacheKey, pct);
-            }
-
-            const blob = new Blob(chunks, { type: resp.headers.get('Content-Type') || 'video/mp4' });
-            const cache = await caches.open(VIDEO_CACHE_NAME);
-            await cache.put(`video-${cacheKey}`, new Response(blob, {
-                headers: {
-                    'Content-Type': resp.headers.get('Content-Type') || 'video/mp4',
-                    'Content-Length': blob.size.toString()
+                if (resp.status === 404) {
+                    if (attempt < MAX_RETRIES) {
+                        meta.errorMessage = `Файл готовится... попытка ${attempt}/${MAX_RETRIES}`;
+                        await saveVideoMeta(meta);
+                        showError(`Файл готовится... попытка ${attempt}/${MAX_RETRIES}`);
+                        await new Promise(r => setTimeout(r, WAIT_SECONDS * 1000));
+                        continue;
+                    }
+                    throw new Error('Файл не найден на сервере');
                 }
-            }));
 
-            meta.status = 'done';
-            meta.progress = 100;
-            meta.sizeBytes = blob.size;
-            downloaded = true;
+                if (!resp.ok) throw new Error(`Сервер вернул ${resp.status}`);
 
-        } catch (fetchErr) {
-            console.warn('[DL] fetch/CORS failed:', fetchErr.message);
+                const contentLength = parseInt(resp.headers.get('Content-Length') || '0', 10);
+                const reader = resp.body.getReader();
+                const chunks = [];
+                let received = 0;
+
+                while (true) {
+                    const { done, value } = await reader.read();
+                    if (done) break;
+                    chunks.push(value);
+                    received += value.length;
+                    const pct = contentLength > 0 ? Math.round((received / contentLength) * 100) : -1;
+                    meta.progress = pct;
+                    meta.sizeBytes = received;
+                    updateLibraryProgress(cacheKey, pct);
+                }
+
+                const blob = new Blob(chunks, { type: resp.headers.get('Content-Type') || 'video/mp4' });
+                const cache = await caches.open(VIDEO_CACHE_NAME);
+                await cache.put(`video-${cacheKey}`, new Response(blob, {
+                    headers: {
+                        'Content-Type': resp.headers.get('Content-Type') || 'video/mp4',
+                        'Content-Length': blob.size.toString()
+                    }
+                }));
+
+                meta.status = 'done';
+                meta.progress = 100;
+                meta.sizeBytes = blob.size;
+                downloaded = true;
+                break;
+
+            } catch (fetchErr) {
+                if (fetchErr.message.includes('404') && attempt < MAX_RETRIES) continue;
+                console.error('[DL] fetch failed:', fetchErr.message);
+                break;
+            }
         }
 
         if (!downloaded) {
