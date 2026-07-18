@@ -177,6 +177,8 @@ self.addEventListener('fetch', (event) => {
     
     if (!url.protocol.startsWith('http')) return;
     
+    if (url.origin !== self.location.origin) return;
+    
     if (isOfflineVideoRequest(request)) {
         event.respondWith(handleOfflineVideoRequest(request));
         return;
